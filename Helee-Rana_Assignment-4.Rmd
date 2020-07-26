@@ -1,0 +1,236 @@
+---
+title: "Assignment 4"
+author: "Helee Rana"
+date: "4/19/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+## KNN model to predict whether a patient has AHD or Not
+```{r}
+require(tidyverse)
+
+ chest_pain=read_csv('https://raw.githubusercontent.com/PacktPublishing/Practical-Machine-Learning-Cookbook/master/Chapter%2006/Data/Decision%20tree%20learning%20-%20Advance%20Health%20Directive%20for%20Patients%20with%20Chest%20Pain.csv')
+ chest_pain%>%column_to_rownames('X1') %>%write_csv('chest_pain.csv')
+
+chest_pain=read_csv('chest_pain.csv')
+
+chest_pain%>%head()
+```
+
+age  = age in years  
+sex(1 = male; 0 = female)  
+cpchest = pain type  
+trestbp  = sresting blood pressure (in mm Hg on admission to the hospital)  
+chol = serum cholestoral in mg/dl  
+fbs (fasting blood sugar > 120 mg/dl) =  (1 = true; 0 = false)   
+restecg = resting electrocardiographic results  
+thalach  = maximum heart rate achieved  
+exang = exercise induced angina (1 = yes; 0 = no)  
+oldpeak  = ST depression induced by exercise relative to rest  
+slope  = the slope of the peak exercise ST segment  
+ca  = number of major vessels (0-3) colored by flourosopy  
+thal3 = normal; 6 = fixed defect; 7 = reversable defect  
+
+AHD = atherosclerotic heart disease.
+
+
+## Create a knn model to predict whether a patient has AHD following the steps below
+
+## Preprocessing 
+
+Are there any missing values? Define a strategy to manage missing values. 
+
+
+```{r}
+## There are two methods to remove the missing values and impute new values for categorical data- MICE package and missForest package.
+
+## I have used MICE package over here
+
+#install.packages("mice")
+require(mice)
+md.pattern(chest_pain)
+
+```
+
+
+```{r}
+## Now we come to know that there are 2 missing values in Thal and 4 missing values in Ca
+
+## Converting categorical data  present in Thal column to numeric data. This is necessary to find the NA values and impute data into NA values.
+
+chest_pain1 = as.numeric( factor(chest_pain$Thal) ) -1
+chest_pain1
+```
+
+
+```{r}
+## Putting the numeric Thal into dataset and removing categorical Thal
+
+chest_pain = chest_pain %>% mutate(Thal_new = chest_pain1)
+chest_pain = chest_pain %>% select(-Thal)
+chest_pain
+
+```
+
+
+```{r}
+
+## count of  missing values
+chest_pain %>% group_by(Thal_new) %>% count()
+chest_pain %>% group_by(Ca) %>% count()
+```
+
+```{r}
+## Imputing data
+
+imputed_Data <- mice(chest_pain, m=5, maxit = 50, method = 'pmm', seed = 500)
+
+summary(imputed_Data)
+
+## The following parameters are used
+
+## m  – 5 imputed data sets
+## maxit –  no. of iterations taken to impute missing values
+## method – Predictive mean matching
+```
+
+
+
+
+```{r}
+
+## Now we will check the imputed data
+
+imputed_Data$imp$Ca
+imputed_Data$imp$Thal_new
+```
+
+
+
+
+```{r}
+
+## View the complete dataset
+cp_completed <- complete(imputed_Data,2)
+cp_completed
+
+## Thal and Ca are imputed with new values
+cp_completed %>% group_by(Ca) %>% count()
+cp_completed %>% group_by(Thal_new) %>% count()
+```
+
+
+
+## Normalization 
+
+```{r}
+##  Now we need to normalize only the numeric variables
+
+cp_completed
+cp_normalized=cp_completed%>% mutate(RestBP1=scale(RestBP), MaxHR1=scale(MaxHR), Chol1=scale(Chol), Oldpeak1=scale(Oldpeak))
+  
+
+cp_final = cp_normalized%>%select(-RestBP, -MaxHR, -Chol, -Oldpeak, )
+cp_final
+```
+
+
+```{r}
+## removing AHD because it will be used for prediction and Age because age shouldnt be dummy coded
+cp_temp=cp_final%>%select(-Age, -AHD)
+cp_temp
+
+```
+
+## Dummy Coding
+```{r}
+## Converting the categorical variables to numeric variables
+
+##install.packages('caret')
+require(caret)
+dmv = dummyVars('~.' , data = cp_temp)
+cp_temp=data.frame(predict(dmv,newdata = cp_temp))
+cp_temp
+```
+
+```{r}
+
+## Putting Age and AHD again into dataset
+
+cp1=cp_final%>%select(Age, AHD)
+
+cp1=cp1%>%mutate(id=row_number())
+cp_temp=cp_temp%>%mutate(id=row_number())
+
+cp=cp_temp%>%left_join(cp1, by=c('id'='id'))
+cp
+
+
+```
+
+## Predict
+
+Please use random train/split for your prediction, Use 60/40 split
+
+```{r}
+##install.packages('e1071')
+require(e1071)
+
+set.seed(123)
+train=runif(nrow(cp))>.6
+cp_train=cp[train,]
+cp_test=cp[!train,]
+
+require(class)
+
+##prediction 
+predict_cp= knn(train=cp_train[,-18 ], test=cp_test[,-18], cl=cp_train$AHD, k=21, prob=TRUE)
+predict_cp
+
+##evaluation
+confusionMatrix(predict_cp, reference = as.factor(cp_test$AHD), positive = 'No')
+
+
+## True negative: 61, True Positive: 33, False negative:49, False Positive: 41
+## Prediction for "No" : 110 and true value: 102
+## Prediction for "Yes": 74 and true value: 82
+
+```
+
+
+
+
+
+
+
+
+```{r}
+
+seq(1,22,2)
+
+rs=list()
+for (i in seq(1,22,2)){
+  predict_cp= knn(train=cp_train[,-18], test=cp_test[,-18], cl=cp_train$AHD, k=i, prob=TRUE)
+  results=confusionMatrix(predict_cp, reference = as.factor(cp_test$AHD), positive = 'Yes')
+  results=results$overall
+  rs[[as.character(i)]]=results
+}
+
+
+final_results=rs%>%as_tibble()%>%t()
+final_results=final_results[,1:2]
+results_df=data.frame(final_results)
+names(results_df)<-c('Accuracy','Kappa')
+row.names(results_df)
+
+results_df$k=as.numeric(row.names(results_df))
+results_df%>%arrange(desc(Accuracy))
+
+## The best value for k is 13
+```
+```{r}
+ggplot(results_df)+geom_line(aes(x=k, y=Accuracy))
+```
+
